@@ -1,36 +1,42 @@
 {
-  "$schema": "https://json.schemas.minecraft.net/behavior.manifest.json",
   "format_version": 2,
   "header": {
-    "description": "Behavior Pack para sistema de segunda mano (Offhand)",
-    "name": "Mano Royale - Behavior",
+    "description": "Mano Royale - Sistema de segunda mano universal (comida, bloques, herramientas, antorcha dinámica)",
+    "name": "§6Mano Royale §7Behavior",
     "uuid": "7f3b5a8c-1a2d-4e6f-9b3c-5d7e9a1f2b4c",
-    "version": [1, 0, 0],
-    "min_engine_version": [1, 16, 0]
+    "version": [1, 2, 0],
+    "min_engine_version": [1, 20, 50]
   },
   "modules": [
     {
-      "description": "Módulo de datos (items y funciones)",
+      "description": "Datos: items, funciones",
       "type": "data",
       "uuid": "a1b2c3d4-e5f6-4a8b-9c0d-1e2f3a4b5c6d",
-      "version": [1, 0, 0]
+      "version": [1, 2, 0]
     },
     {
-      "description": "Module de scripts (JavaScript)",
+      "description": "Scripts JavaScript (API @minecraft/server)",
       "type": "script",
       "language": "javascript",
-      "uuid": "b2c3d4e5-f6a7-4b9c-0d1e-2f3a4b5c6d7e",
-      "version": [1, 0, 0],
+      "uuid": "b2c3d4e5-f6a7-4b9c-8d1e-2f3a4b5c6d7e",
+      "version": [1, 2, 0],
       "entry": "scripts/main.js"
     }
   ],
-  "capabilities": [
-    "scripting"
-  ],
+  "capabilities": ["script_eval"],
   "dependencies": [
     {
+      "module_name": "@minecraft/server",
+      "version": "1.7.0"
+    },
+    {
       "uuid": "c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f",
-      "version": [1, 0, 0]
+      "version": [1, 2, 0]
     }
-  ]
+  ],
+  "metadata": {
+    "authors": ["pepitogumball-lang"],
+    "license": "MIT",
+    "url": "https://github.com/pepitogumball-lang/Mano-royale"
+  }
 }

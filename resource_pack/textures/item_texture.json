@@ -1,0 +1,12 @@
+{
+  "resource_pack_name": "mano_royale",
+  "texture_name": "atlas.items",
+  "texture_data": {
+    "offhand_torch": {
+      "textures": "textures/items/offhand_torch"
+    },
+    "mr_trigger": {
+      "textures": "textures/items/mr_trigger"
+    }
+  }
+}

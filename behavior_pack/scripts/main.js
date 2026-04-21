@@ -1,198 +1,415 @@
 /**
- * Mano Royale - Sistema de Segunda Mano (Offhand) con Auto-Detect
- * v1.1.0 - Detección automática de bloques vs comida
- * 
- * Características:
- * - Detecta automáticamente si el item es comida o bloque
- * - Botón dinámico: "Comer" para comida, "Colocar" para bloques
- * - Interfaz optimizada para Android
- * - Compatible con Samsung Galaxy Tab Android 14
+ * Mano Royale v1.2.0 - Sistema universal de Segunda Mano
+ *
+ * Funciona con CUALQUIER item: comida, bloques, herramientas, armas,
+ * antorchas, pociones, etc. Detecta el tipo automáticamente.
+ *
+ * Disparadores de la accion del offhand:
+ *   1) Usar el item "Disparador Mano Royale" (manoroyale:trigger)
+ *      - sneak + use  -> ciclar modo (auto / eat / place / use)
+ *      - use normal   -> ejecutar accion en offhand
+ *   2) Comando: /function manoroyale:action
+ *   3) Evento: /scriptevent manoroyale:action @s
+ *
+ * Compatible: Windows, Android (32/64), iOS, Xbox, Switch.
  */
 
-import { world, ItemStack, Player } from "@minecraft/server";
+import {
+    world,
+    system,
+    EquipmentSlot,
+    ItemStack,
+    GameMode,
+    BlockPermutation
+} from "@minecraft/server";
 
-// ========== CONSTANTES ==========
+// ============================================================
+//  CONSTANTES
+// ============================================================
 
-const OFFHAND_SLOT = 45;
-const OFFHAND_TORCH = "manoroyale:offhand_torch";
-const OFFHAND_NAMESPACE = "manoroyale";
-const TAG_OFFHAND = "offhand_active";
-const MOD_NAME = "§6[Mano Royale v1.1]§r";
-const MOD_VERSION = "1.1.0";
-const RAYCAST_DISTANCE = 5;
+const MOD_TAG          = "§6[Mano Royale]§r";
+const TRIGGER_ITEM     = "manoroyale:trigger";
+const OFFHAND_TORCH    = "manoroyale:offhand_torch";
+const RAYCAST_DISTANCE = 6;
+const TORCH_LIGHT_LVL  = 14;
+const DP_MODE          = "mr_mode";   // dynamic property por jugador (mode)
 
-// ========== FUNCIONES BÁSICAS ==========
+// Modos de operacion para el disparador
+const MODES = ["auto", "eat", "place", "use", "swap"];
 
-/**
- * Obtiene el item de la segunda mano
- * @param {Player} player - Jugador del que obtener el item
- * @returns {ItemStack|null} Item o null si no hay
- */
+// ============================================================
+//  HELPERS DE OFFHAND
+// ============================================================
+
+function getEquippable(player) {
+    return player.getComponent("minecraft:equippable");
+}
+
 function getOffhandItem(player) {
     try {
-        const inventory = player.getComponent("minecraft:inventory");
-        if (!inventory || !inventory.container) return null;
-        return inventory.container.getItem(OFFHAND_SLOT);
-    } catch (error) {
-        console.warn(`${MOD_NAME} Error obteniendo item offhand: ${error.message}`);
-        return null;
+        const eq = getEquippable(player);
+        return eq ? eq.getEquipment(EquipmentSlot.Offhand) : undefined;
+    } catch (e) {
+        return undefined;
     }
 }
 
-/**
- * Establece un item en la segunda mano
- * @param {Player} player - Jugador objetivo
- * @param {ItemStack|null} item - Item a establecer (null para vaciar)
- * @returns {boolean} Éxito
- */
 function setOffhandItem(player, item) {
     try {
-        const inventory = player.getComponent("minecraft:inventory");
-        if (!inventory || !inventory.container) return false;
-        
-        if (item) {
-            inventory.container.setItem(OFFHAND_SLOT, item);
-        } else {
-            inventory.container.setItem(OFFHAND_SLOT, undefined);
-        }
+        const eq = getEquippable(player);
+        if (!eq) return false;
+        eq.setEquipment(EquipmentSlot.Offhand, item);
         return true;
-    } catch (error) {
-        console.warn(`${MOD_NAME} Error estableciendo item offhand: ${error.message}`);
+    } catch (e) {
         return false;
     }
 }
 
-/**
- * Comer item de segunda mano
- * @param {Player} player - Jugador que come
- */
-function eatOffhandItem(player) {
-    const item = getOffhandItem(player);
+function getMainhandItem(player) {
+    try {
+        const eq = getEquippable(player);
+        return eq ? eq.getEquipment(EquipmentSlot.Mainhand) : undefined;
+    } catch (e) {
+        return undefined;
+    }
+}
+
+function setMainhandItem(player, item) {
+    try {
+        const eq = getEquippable(player);
+        if (!eq) return false;
+        eq.setEquipment(EquipmentSlot.Mainhand, item);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+function decrementOrClear(player, item) {
     if (!item) return;
+    if (item.amount > 1) {
+        const next = item.clone();
+        next.amount = item.amount - 1;
+        setOffhandItem(player, next);
+    } else {
+        setOffhandItem(player, undefined);
+    }
+}
 
-    const typeId = item.typeId;
-    const canEat = isEdibleItem(typeId);
+// ============================================================
+//  DETECCION UNIVERSAL DEL TIPO DE ITEM
+//  No usamos listas cerradas; revisamos componentes y heuristica
+//  por id para soportar TODOS los items del juego (vanilla y modded).
+// ============================================================
 
-    if (!canEat) {
-        player.sendMessage("§cEste item no es comestible");
+function hasFoodComponent(item) {
+    try { return !!item.getComponent("minecraft:food"); } catch (_) { return false; }
+}
+function hasDurability(item) {
+    try { return !!item.getComponent("minecraft:durability"); } catch (_) { return false; }
+}
+
+function looksLikeBlock(typeId) {
+    // Heuristica generica: si existe el bloque homonimo, es colocable
+    if (!typeId) return false;
+    const id = typeId.includes(":") ? typeId : `minecraft:${typeId}`;
+    try {
+        BlockPermutation.resolve(id);
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+const WEAPON_HINTS = ["sword", "axe", "bow", "crossbow", "trident", "mace"];
+const TOOL_HINTS   = ["pickaxe", "shovel", "hoe", "shears", "fishing_rod", "flint_and_steel", "shield"];
+const RANGED_HINTS = ["bow", "crossbow", "trident", "snowball", "egg", "ender_pearl", "splash_potion", "lingering_potion"];
+
+function idIncludes(typeId, list) {
+    if (!typeId) return false;
+    const id = typeId.toLowerCase();
+    return list.some(h => id.includes(h));
+}
+
+/**
+ * Devuelve uno de:
+ *   "food" | "block" | "weapon" | "tool" | "ranged" | "torch" | "potion" | "unknown"
+ */
+function detectType(item) {
+    if (!item) return "unknown";
+    const id = item.typeId || "";
+
+    if (id === OFFHAND_TORCH || id === "minecraft:torch" || id === "minecraft:soul_torch" || id === "minecraft:redstone_torch") {
+        return "torch";
+    }
+    if (id.includes("potion")) return "potion";
+    if (hasFoodComponent(item)) return "food";
+    if (idIncludes(id, RANGED_HINTS)) return "ranged";
+    if (idIncludes(id, WEAPON_HINTS)) return "weapon";
+    if (idIncludes(id, TOOL_HINTS))   return "tool";
+    if (looksLikeBlock(id))           return "block";
+    if (hasDurability(item))          return "tool";
+    return "unknown";
+}
+
+function typeLabel(t) {
+    return ({
+        food:   "§a🍎 Comer",
+        block:  "§b🧱 Colocar",
+        tool:   "§e🛠 Usar",
+        weapon: "§c⚔ Atacar",
+        ranged: "§6🏹 Disparar",
+        torch:  "§e🔥 Iluminar",
+        potion: "§d⚗ Beber",
+        unknown:"§7? Desconocido"
+    })[t] || "§7?";
+}
+
+// ============================================================
+//  ACCIONES
+// ============================================================
+
+function actionEat(player, item) {
+    try {
+        // Daño/curación según comida — Minecraft maneja saturacion al usar el item,
+        // pero sin clic real solo podemos simular: aplicamos saturacion + curacion ligera
+        // y efectos especiales para items conocidos.
+        const id = item.typeId;
+        if (id === "minecraft:golden_apple") {
+            player.addEffect("absorption", 2400, { amplifier: 0, showParticles: false });
+            player.addEffect("regeneration", 100, { amplifier: 1, showParticles: false });
+        } else if (id === "minecraft:enchanted_golden_apple") {
+            player.addEffect("absorption", 2400, { amplifier: 3, showParticles: false });
+            player.addEffect("regeneration", 400, { amplifier: 1, showParticles: false });
+            player.addEffect("fire_resistance", 6000, { amplifier: 0, showParticles: false });
+        } else if (id === "minecraft:milk_bucket") {
+            // limpia efectos
+            for (const ef of player.getEffects()) player.removeEffect(ef.typeId);
+            setOffhandItem(player, new ItemStack("minecraft:bucket", 1));
+            player.playSound("random.drink");
+            player.sendMessage(`${MOD_TAG} §aBebiste leche.`);
+            return;
+        }
+        player.addEffect("saturation", 30, { amplifier: 1, showParticles: false });
+        player.runCommand("playsound random.eat @s ~ ~ ~");
+        decrementOrClear(player, item);
+        player.sendMessage(`${MOD_TAG} §aComiste §f${id.replace("minecraft:", "")}§a.`);
+    } catch (e) {
+        player.sendMessage(`${MOD_TAG} §cError al comer: ${e}`);
+    }
+}
+
+function actionPlace(player, item) {
+    try {
+        const view = player.getViewDirection();
+        const eye  = player.getHeadLocation();
+        const hit  = player.getBlockFromViewDirection({ maxDistance: RAYCAST_DISTANCE });
+
+        let target;
+        if (hit && hit.block) {
+            // colocar adyacente a la cara golpeada
+            const face = hit.face;
+            target = hit.block.offset(faceToVec(face));
+        } else {
+            // colocar al frente del jugador
+            target = {
+                x: Math.floor(eye.x + view.x * 2),
+                y: Math.floor(eye.y + view.y * 2),
+                z: Math.floor(eye.z + view.z * 2)
+            };
+        }
+
+        const id = item.typeId.includes(":") ? item.typeId : `minecraft:${item.typeId}`;
+        const perm = BlockPermutation.resolve(id);
+        const block = player.dimension.getBlock(target);
+        if (!block) {
+            player.sendMessage(`${MOD_TAG} §cNo hay bloque destino`);
+            return;
+        }
+        if (block.typeId !== "minecraft:air") {
+            player.sendMessage(`${MOD_TAG} §cEspacio ocupado por §f${block.typeId}`);
+            return;
+        }
+        block.setPermutation(perm);
+        player.runCommand(`playsound dig.stone @s ${target.x} ${target.y} ${target.z}`);
+
+        // Consumo en supervivencia
+        const gm = player.getGameMode ? player.getGameMode() : undefined;
+        if (gm !== GameMode.creative) decrementOrClear(player, item);
+
+        player.sendMessage(`${MOD_TAG} §a✓ Colocado §f${id.replace("minecraft:", "")}`);
+    } catch (e) {
+        player.sendMessage(`${MOD_TAG} §cNo se puede colocar: ${e}`);
+    }
+}
+
+function faceToVec(face) {
+    switch (face) {
+        case "Up":    return { x: 0,  y: 1,  z: 0  };
+        case "Down":  return { x: 0,  y: -1, z: 0  };
+        case "North": return { x: 0,  y: 0,  z: -1 };
+        case "South": return { x: 0,  y: 0,  z: 1  };
+        case "East":  return { x: 1,  y: 0,  z: 0  };
+        case "West":  return { x: -1, y: 0,  z: 0  };
+        default:      return { x: 0,  y: 1,  z: 0  };
+    }
+}
+
+function actionSwap(player) {
+    const off  = getOffhandItem(player);
+    const main = getMainhandItem(player);
+    setOffhandItem(player, main);
+    setMainhandItem(player, off);
+    player.sendMessage(`${MOD_TAG} §b⇄ Intercambiadas las manos`);
+}
+
+function actionUseToolOrWeapon(player, item) {
+    // Sin un clic real no podemos minar/atacar; lo intercambiamos a la mano
+    // principal para que el jugador pueda usarlo de inmediato.
+    const main = getMainhandItem(player);
+    setOffhandItem(player, main);
+    setMainhandItem(player, item);
+    player.sendMessage(`${MOD_TAG} §e🛠 §fListo para usar §a${item.typeId.replace("minecraft:", "")}`);
+}
+
+function actionPotion(player, item) {
+    // Aplicamos efecto basico y consumimos
+    player.addEffect("regeneration", 200, { amplifier: 0, showParticles: true });
+    player.runCommand("playsound random.drink @s ~ ~ ~");
+    decrementOrClear(player, item);
+    player.sendMessage(`${MOD_TAG} §dBebiste la pocion`);
+}
+
+function actionTorch(player) {
+    // Iluminacion dinamica cerca del jugador
+    try {
+        const loc = player.location;
+        player.dimension.runCommand(
+            `setblock ${Math.floor(loc.x)} ${Math.floor(loc.y + 1)} ${Math.floor(loc.z)} light_block 14 keep`
+        );
+        player.sendMessage(`${MOD_TAG} §e🔥 Iluminacion +${TORCH_LIGHT_LVL}`);
+    } catch (_) { /* light_block requiere experimentos en algunas versiones */ }
+}
+
+// ============================================================
+//  DISPATCHER
+// ============================================================
+
+function getMode(player) {
+    const m = player.getDynamicProperty(DP_MODE);
+    return (typeof m === "string" && MODES.includes(m)) ? m : "auto";
+}
+function setMode(player, mode) {
+    player.setDynamicProperty(DP_MODE, mode);
+    player.onScreenDisplay.setActionBar(`${MOD_TAG} §fModo: §a${mode}`);
+}
+function cycleMode(player) {
+    const cur = getMode(player);
+    const next = MODES[(MODES.indexOf(cur) + 1) % MODES.length];
+    setMode(player, next);
+}
+
+function performOffhandAction(player) {
+    const item = getOffhandItem(player);
+    if (!item) {
+        player.sendMessage(`${MOD_TAG} §cNo hay nada en la segunda mano`);
         return;
     }
 
-    try {
-        // Aplicar efectos según el tipo
-        applyFoodEffects(player, typeId);
+    const mode = getMode(player);
+    const detected = detectType(item);
+    const finalAction = mode === "auto" ? detected : mode;
 
-        // Reducir cantidad
-        if (item.amount > 1) {
-            item.amount--;
-            setOffhandItem(player, item);
-        } else {
-            setOffhandItem(player, null);
-        }
-
-        player.sendMessage(`§aHas comido ${item.nameTag || typeId}`);
-    } catch (error) {
-        console.error(`[Mano Royale] Error comiendo item: ${error.message}`);
-    }
-}
-
-/**
- * Determina si un item es comestible
- * @param {string} typeId - ID del item
- * @returns {boolean}
- */
-function isEdibleItem(typeId) {
-    const edibleItems = [
-        "minecraft:apple",
-        "minecraft:golden_apple",
-        "minecraft:enchanted_golden_apple",
-        "minecraft:carrot",
-        "minecraft:baked_potato",
-        "minecraft:beef",
-        "minecraft:cooked_beef",
-        "minecraft:chicken",
-        "minecraft:cooked_chicken",
-        "minecraft:mutton",
-        "minecraft:cooked_mutton",
-        "minecraft:porkchop",
-        "minecraft:cooked_porkchop",
-        "minecraft:fish",
-        "minecraft:cooked_fish",
-        "minecraft:salmon",
-        "minecraft:cooked_salmon",
-        "minecraft:bread",
-        "minecraft:cookie",
-        "minecraft:melon_slice",
-        "minecraft:sweet_berries",
-        "minecraft:glow_berries",
-        "minecraft:dried_kelp",
-        "minecraft:pumpkin_pie",
-        "minecraft:cake",
-        "minecraft:beetroot",
-        "minecraft:mushroom_stew",
-        "minecraft:rabbit_stew"\n    ];\n    return edibleItems.includes(typeId);\n}\n\n/**\n * Lista de bloques colocables desde offhand\n * @param {string} typeId - ID del item\n * @returns {boolean}\n */\nfunction isPlaceableBlock(typeId) {\n    const placeableBlocks = [\n        \"minecraft:oak_log\",\n        \"minecraft:spruce_log\",\n        \"minecraft:birch_log\",\n        \"minecraft:jungle_log\",\n        \"minecraft:acacia_log\",\n        \"minecraft:dark_oak_log\",\n        \"minecraft:oak_planks\",\n        \"minecraft:spruce_planks\",\n        \"minecraft:birch_planks\",\n        \"minecraft:jungle_planks\",\n        \"minecraft:acacia_planks\",\n        \"minecraft:dark_oak_planks\",\n        \"minecraft:stone\",\n        \"minecraft:granite\",\n        \"minecraft:diorite\",\n        \"minecraft:andesite\",\n        \"minecraft:dirt\",\n        \"minecraft:grass_block\",\n        \"minecraft:sand\",\n        \"minecraft:red_sand\",\n        \"minecraft:gravel\",\n        \"minecraft:oak_leaves\",\n        \"minecraft:spruce_leaves\",\n        \"minecraft:birch_leaves\",\n        \"minecraft:jungle_leaves\",\n        \"minecraft:acacia_leaves\",\n        \"minecraft:dark_oak_leaves\",\n        \"minecraft:cobblestone\",\n        \"minecraft:stone_bricks\",\n        \"minecraft:brick_block\",\n        \"minecraft:nether_brick\",\n        \"minecraft:terracotta\",\n        \"minecraft:white_wool\",\n        \"minecraft:light_gray_wool\",\n        \"minecraft:gray_wool\",\n        \"minecraft:black_wool\",\n        \"minecraft:red_wool\",\n        \"minecraft:orange_wool\",\n        \"minecraft:yellow_wool\",\n        \"minecraft:lime_wool\",\n        \"minecraft:green_wool\",\n        \"minecraft:cyan_wool\",\n        \"minecraft:light_blue_wool\",\n        \"minecraft:blue_wool\",\n        \"minecraft:purple_wool\",\n        \"minecraft:magenta_wool\",\n        \"minecraft:pink_wool\",\n        \"minecraft:brown_wool\",\n        \"minecraft:torch\",\n        \"minecraft:soul_torch\",\n        \"minecraft:manoroyale:offhand_torch\"\n    ];\n    return placeableBlocks.includes(typeId);\n}\n\n/**\n * Detecta automáticamente el tipo de item (comida, bloque, herramienta, etc)\n * @param {string} typeId - ID del item\n * @returns {string} Tipo del item: 'food', 'block', 'tool', 'unknown'\n */\nfunction detectItemType(typeId) {\n    if (isEdibleItem(typeId)) return 'food';\n    if (isPlaceableBlock(typeId)) return 'block';\n    if (typeId.includes('pickaxe') || typeId.includes('axe') || typeId.includes('shovel') || typeId.includes('hoe') || typeId.includes('sword')) return 'tool';\n    if (typeId.includes('bow') || typeId.includes('arrow')) return 'ranged';\n    return 'unknown';\n}
-
-/**
- * Aplica efectos según el tipo de comida
- * @param {Player} player - Jugador que recibe efectos
- * @param {string} typeId - Tipo de item comido
- */
-function applyFoodEffects(player, typeId) {
-    switch (typeId) {
-        case "minecraft:golden_apple":
-            player.addEffect("absorption", 2400, { amplifier: 0 });
-            player.addEffect("regeneration", 100, { amplifier: 1 });
-            break;
-        case "minecraft:enchanted_golden_apple":
-            player.addEffect("absorption", 2400, { amplifier: 3 });
-            player.addEffect("regeneration", 400, { amplifier: 2 });
-            player.addEffect("fire_resistance", 3600, { amplifier: 0 });
-            break;
-        case "minecraft:apple":
-            player.addEffect("regeneration", 100, { amplifier: 0 });
-            break;
+    switch (finalAction) {
+        case "food":   return actionEat(player, item);
+        case "block":  return actionPlace(player, item);
+        case "potion": return actionPotion(player, item);
+        case "torch":  return actionTorch(player);
+        case "tool":
+        case "weapon":
+        case "ranged":
+        case "use":    return actionUseToolOrWeapon(player, item);
+        case "swap":   return actionSwap(player);
+        case "eat":    return actionEat(player, item);
+        case "place":  return actionPlace(player, item);
         default:
-            // Efectos básicos de saturación
-            player.addEffect("saturation", 30, { amplifier: 0 });
+            player.sendMessage(`${MOD_TAG} §7Item no reconocido (§f${item.typeId}§7). Modo §f${mode}§7.`);
     }
 }
 
-// ========== EVENTOS ==========
+// ============================================================
+//  HUD ACTION BAR (estado constante)
+// ============================================================
 
-/**
- * Inicialización del mundo
- */
-world.afterEvents.worldInitialize.subscribe(() => {
-    console.log("[Mano Royale] Sistema de offhand inicializado");
-    world.setDynamicProperty("mano_royale_active", true);
+system.runInterval(() => {
+    for (const p of world.getAllPlayers()) {
+        try {
+            const off = getOffhandItem(p);
+            const mode = getMode(p);
+            if (!off) {
+                p.onScreenDisplay.setActionBar(`§7[Offhand] vacio §8| §7modo §f${mode}`);
+            } else {
+                const t = detectType(off);
+                p.onScreenDisplay.setActionBar(
+                    `§6[Offhand] §f${off.typeId.replace("minecraft:", "")} §7x${off.amount} §8| ${typeLabel(t)} §8| §7modo §f${mode}`
+                );
+            }
+        } catch (_) {}
+    }
+}, 10); // 2 veces por segundo
+
+// ============================================================
+//  EVENTOS / DISPARADORES
+// ============================================================
+
+// 1) Item disparador (sneak = ciclar modo, use = ejecutar accion)
+world.afterEvents.itemUse.subscribe((ev) => {
+    const player = ev.source;
+    const it = ev.itemStack;
+    if (!player || !it) return;
+    if (it.typeId !== TRIGGER_ITEM) return;
+
+    if (player.isSneaking) cycleMode(player);
+    else performOffhandAction(player);
 });
 
-/**
- * Evento cuando el jugador está en el servidor
- */
-world.afterEvents.playerSpawn.subscribe((event) => {
-    const player = event.player;
-    player.sendMessage("§6[Mano Royale]§r Usa /function manoroyale:eat_offhand para comer desde la segunda mano");
+// 2) Funciones / scriptevent
+system.afterEvents.scriptEventReceive.subscribe((ev) => {
+    const id = ev.id;
+    const src = ev.sourceEntity;
+    if (!src || src.typeId !== "minecraft:player") return;
+
+    if (id === "manoroyale:action") performOffhandAction(src);
+    else if (id === "manoroyale:cycle") cycleMode(src);
+    else if (id === "manoroyale:swap")  actionSwap(src);
+    else if (id === "manoroyale:give") {
+        src.runCommand(`give @s ${TRIGGER_ITEM}`);
+        src.runCommand(`give @s ${OFFHAND_TORCH}`);
+    }
+}, { namespaces: ["manoroyale"] });
+
+// 3) Antorcha en offhand: ilumina al jugador automaticamente
+system.runInterval(() => {
+    for (const p of world.getAllPlayers()) {
+        try {
+            const off = getOffhandItem(p);
+            if (!off) continue;
+            if (off.typeId === OFFHAND_TORCH || off.typeId === "minecraft:torch") {
+                actionTorch(p);
+            }
+        } catch (_) {}
+    }
+}, 20);
+
+// ============================================================
+//  BIENVENIDA
+// ============================================================
+
+world.afterEvents.playerSpawn.subscribe((ev) => {
+    if (!ev.initialSpawn) return;
+    const p = ev.player;
+    p.sendMessage(`${MOD_TAG} §aBienvenido. Usa §f/function manoroyale:give§a para obtener el disparador.`);
+    p.sendMessage(`${MOD_TAG} §7Modos: ${MODES.map(m => "§f" + m).join("§7, ")}.`);
 });
 
-// Exportar funciones para comandos
-// ========== NUEVAS FUNCIONES v1.1.0 ==========
-
-/**
- * Detecta si es bloque o comida de manera automática
- * @param {ItemStack} item - Item a verificar
- * @returns {string} 'food', 'block', 'tool', o 'unknown'
- */
-function detectItemType(item) {
-    if (!item) return 'unknown';
-    if (isEdibleItem(item.typeId)) return 'food';
-    if (isPlaceableBlock(item.typeId)) return 'block';
-    if (item.typeId.includes('pickaxe') || item.typeId.includes('axe') || item.typeId.includes('shovel')) return 'tool';
-    return 'unknown';
-}
-
-/**
- * Verifica si item es bloque colocable
- * @param {string} typeId - ID del item
- * @returns {boolean}
- */\nfunction isPlaceableBlock(typeId) {\n    const blocks = [\n        "minecraft:oak_log", "minecraft:stone", "minecraft:dirt", "minecraft:grass_block",\n        "minecraft:sand", "minecraft:gravel", "minecraft:oak_leaves", "minecraft:cobblestone",\n        "minecraft:torch", "minecraft:soul_torch", "minecraft:brick_block", "minecraft:oak_planks",\n        "minecraft:spruce_planks", "minecraft:birch_planks", "minecraft:jungle_planks",\n        "minecraft:acacia_planks", "minecraft:dark_oak_planks", "minecraft:white_wool"\n    ];\n    return blocks.includes(typeId);\n}\n\n/**\n * Coloca bloque desde offhand automáticamente\n * @param {Player} player - Jugador que coloca\n */\nfunction placeBlockFromOffhand(player) {\n    const item = getOffhandItem(player);\n    if (!item || detectItemType(item) !== 'block') {\n        player.sendMessage(`${MOD_NAME} §cNo hay bloque en offhand`);\n        return;\n    }\n\n    try {\n        const pos = {\n            x: Math.floor(player.location.x + player.getViewDirection().x * 5),\n            y: Math.floor(player.location.y + player.getViewDirection().y * 5),\n            z: Math.floor(player.location.z + player.getViewDirection().z * 5)\n        };\n        \n        const blockType = item.typeId.replace('minecraft:', '');\n        player.dimension.setBlockType(pos, blockType);\n        \n        if (item.amount > 1) {\n            item.amount--;\n            setOffhandItem(player, item);\n        } else {\n            setOffhandItem(player, null);\n        }\n        \n        player.sendMessage(`${MOD_NAME} §a✓ Bloque colocado`);\n    } catch (error) {\n        console.error(`${MOD_NAME} Error: ${error.message}`);\n    }\n}\n\n/**\n * Acción automática según tipo de item\n * @param {Player} player - Jugador\n */\nfunction performOffhandAction(player) {\n    const item = getOffhandItem(player);\n    if (!item) return;\n\n    const type = detectItemType(item);\n    \n    if (type === 'food') {\n        eatOffhandItem(player);\n    } else if (type === 'block') {\n        placeBlockFromOffhand(player);\n    }\n}\n\n// ========== EVENTOS ==========\n\nworld.afterEvents.worldInitialize.subscribe(() => {\n    console.log(`${MOD_NAME} Sistema iniciado (v${MOD_VERSION})`);\n    world.setDynamicProperty(\"mano_royale_active\", true);\n});\n\nworld.afterEvents.playerSpawn.subscribe((event) => {\n    const player = event.player;\n    if (!player.getDynamicProperty(\"mano_royale_welcomed\")) {\n        player.setDynamicProperty(\"mano_royale_welcomed\", true);\n        player.sendMessage(`${MOD_NAME} §7Botón automático en HUD para offhand`);\n    }\n});\n\nworld.afterEvents.chatSend.subscribe((event) => {\n    if (event.message === \"!offhand\") {\n        const player = event.sender;\n        const item = getOffhandItem(player);\n        if (item) {\n            player.sendMessage(`${MOD_NAME} Item: ${item.typeId}, Tipo: ${detectItemType(item)}`);\n        }\n    }\n});\n\n// ========== EXPORTAR ==========\n\nexport {\n    eatOffhandItem,\n    placeBlockFromOffhand,\n    performOffhandAction,\n    getOffhandItem,\n    setOffhandItem,\n    detectItemType,\n    isEdibleItem,\n    isPlaceableBlock\n};
+console.warn(`${MOD_TAG} v1.2.0 cargado correctamente.`);

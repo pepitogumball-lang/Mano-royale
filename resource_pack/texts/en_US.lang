@@ -1,0 +1,4 @@
+pack.name=Mano Royale Resources
+pack.description=Universal offhand system: eat, place, light, swap.
+item.manoroyale:offhand_torch=Offhand Torch
+item.manoroyale:trigger=Mano Royale Trigger

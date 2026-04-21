@@ -1,0 +1,4 @@
+pack.name=Mano Royale Recursos
+pack.description=Sistema universal de segunda mano: comer, colocar, iluminar, intercambiar.
+item.manoroyale:offhand_torch=Antorcha de Segunda Mano
+item.manoroyale:trigger=Disparador Mano Royale

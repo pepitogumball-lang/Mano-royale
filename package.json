@@ -1,1 +1,34 @@
-{\n  \"name\": \"mano-royale\",\n  \"version\": \"1.0.0\",\n  \"description\": \"Sistema de segunda mano para Minecraft Bedrock Edition\",\n  \"scripts\": {\n    \"build\": \"echo 'Build script - copy packs to development folder'\",\n    \"test\": \"echo 'No automated tests yet'\",\n    \"validate\": \"echo 'Validate JSON manifests and items'\",\n    \"docs\": \"echo 'Documentation generated'\"\n  },\n  \"keywords\": [\n    \"minecraft\",\n    \"bedrock\",\n    \"addon\",\n    \"offhand\",\n    \"second-hand\",\n    \"add-on\"\n  ],\n  \"author\": \"pepitogumball-lang\",\n  \"license\": \"MIT\",\n  \"repository\": {\n    \"type\": \"git\",\n    \"url\": \"https://github.com/pepitogumball-lang/Mano-royale.git\"\n  },\n  \"engines\": {\n    \"minecraft\": \">=1.16.0 <=1.20.50\",\n    \"bedrock\": \"true\"\n  },\n  \"minecraft\": {\n    \"experimental_features\": true,\n    \"beta_apis\": true\n  }\n}\n"
+{
+  "name": "mano-royale",
+  "version": "1.0.0",
+  "description": "Sistema de segunda mano para Minecraft Bedrock Edition",
+  "scripts": {
+    "start": "node server.js",
+    "build": "echo 'Build script - copy packs to development folder'",
+    "test": "echo 'No automated tests yet'",
+    "validate": "echo 'Validate JSON manifests and items'",
+    "docs": "echo 'Documentation generated'"
+  },
+  "keywords": [
+    "minecraft",
+    "bedrock",
+    "addon",
+    "offhand",
+    "second-hand",
+    "add-on"
+  ],
+  "author": "pepitogumball-lang",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pepitogumball-lang/Mano-royale.git"
+  },
+  "engines": {
+    "minecraft": ">=1.16.0 <=1.20.50",
+    "bedrock": "true"
+  },
+  "minecraft": {
+    "experimental_features": true,
+    "beta_apis": true
+  }
+}
