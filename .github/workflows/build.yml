@@ -1,0 +1,104 @@
+name: Compilar Mod a .mcaddon
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'behavior_pack/**'
+      - 'resource_pack/**'
+      - '.github/workflows/build.yml'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Descargar código
+      uses: actions/checkout@v3
+    
+    - name: 🏗️ Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+    
+    - name: 📦 Instalar dependencias
+      run: |
+        npm install -g zip
+        npm install -g @minecraft-js/compiler 2>/dev/null || echo "Compiler no disponible"
+    
+    - name: 🔍 Validar JSONs
+      run: |
+        echo "Validando behavior_pack/manifest.json..."
+        node -e "JSON.parse(require('fs').readFileSync('behavior_pack/manifest.json', 'utf8'))" || exit 1
+        echo "✓ behavior_pack/manifest.json válido"
+        
+        echo "Validando resource_pack/manifest.json..."
+        node -e "JSON.parse(require('fs').readFileSync('resource_pack/manifest.json', 'utf8'))" || exit 1
+        echo "✓ resource_pack/manifest.json válido"
+        
+        echo "Validando items..."
+        node -e "JSON.parse(require('fs').readFileSync('behavior_pack/items/offhand_torch.json', 'utf8'))" || exit 1
+        echo "✓ Items válidos"
+        
+        echo "Validando UI..."
+        node -e "JSON.parse(require('fs').readFileSync('resource_pack/ui/hud_screen.json', 'utf8'))" || exit 1
+        echo "✓ UI válida"
+    
+    - name: 📝 Crear archivo de información
+      run: |
+        cat > "mano-royale-info.txt" << 'EOF'
+        Mano Royale - Add-on para Minecraft Bedrock
+        Versión: 1.0.0
+        Compilado: $(date)
+        Repositorio: https://github.com/pepitogumball-lang/Mano-royale
+        Compatible: Minecraft Bedrock 1.16.0 - 1.20.50
+        Plataformas: Windows, Xbox, Switch, Android
+        EOF
+    
+    - name: 📦 Compilar a .mcaddon
+      run: |
+        mkdir -p build
+        
+        # Crear archivo .mcaddon (es un ZIP)
+        cd behavior_pack
+        zip -r ../build/mano-royale.mcaddon .
+        cd ..
+        
+        cd resource_pack
+        zip -r ../build/mano-royale.mcaddon .
+        cd ..
+        
+        echo "✓ .mcaddon creado: build/mano-royale.mcaddon"
+        ls -lh build/mano-royale.mcaddon
+    
+    - name: 📤 Subir artefacto
+      uses: actions/upload-artifact@v3
+      with:
+        name: mano-royale-mcaddon
+        path: |
+          build/mano-royale.mcaddon
+          mano-royale-info.txt
+        retention-days: 30
+    
+    - name: 🔖 Crear Release (si es tag)
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: build/mano-royale.mcaddon
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: ✅ Build completado
+      run: |
+        echo "======================================"
+        echo "✅ Compilación exitosa"
+        echo "======================================"
+        echo "Archivos generados en: build/"
+        echo "Nombre: mano-royale.mcaddon"
+        echo "Tamaño: $(ls -lh build/mano-royale.mcaddon | awk '{print $5}')"
+        echo "======================================"

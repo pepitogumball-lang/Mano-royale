@@ -1,0 +1,32 @@
+# Node modules
+node_modules/
+package-lock.json
+yarn.lock
+
+# IDE y editores
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Minecraft/Development
+*.mcworld
+*.mctemplate
+*.zip
+
+# Temporal
+*.tmp
+*.bak
+*.log
+
+# Build output
+dist/
+build/
+out/
+
+# OS
+.env.local
+.env
